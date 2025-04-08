@@ -54,7 +54,7 @@ After=network.target
 [Service]
 User=$USERNAME
 WorkingDirectory=$BOT_DIR
-ExecStart=$BOT_DIR/venv/bin/python $BOT_DIR/main.py --skip-test-trade
+ExecStart=$BOT_DIR/venv/bin/python $BOT_DIR/main.py --small-account
 Restart=always
 RestartSec=10
 StandardOutput=append:$BOT_DIR/logs/bot_service.log
