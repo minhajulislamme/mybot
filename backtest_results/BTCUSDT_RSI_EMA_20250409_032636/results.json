@@ -1,0 +1,21 @@
+{
+    "strategy": "RSI_EMA",
+    "symbol": "BTCUSDT",
+    "timeframe": "15m",
+    "start_date": "2025-03-10",
+    "end_date": "2025-04-09",
+    "initial_balance": 50.0,
+    "final_balance": 1127.7901664508058,
+    "total_return": 2155.5803329016117,
+    "total_return_amt": 1077.7901664508058,
+    "total_trades": 10,
+    "winning_trades": 5,
+    "losing_trades": 5,
+    "win_rate": 50.0,
+    "max_drawdown": 28.685366373848332,
+    "sharpe_ratio": 1.5340128572093472,
+    "leverage": 20,
+    "risk_per_trade": 1.0,
+    "commission_rate": 0.04,
+    "auto_compound": true
+}

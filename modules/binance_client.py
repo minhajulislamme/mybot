@@ -197,11 +197,16 @@ class BinanceClient:
     
     def get_position_info(self, symbol):
         """Get current position information"""
-        max_retries = 3
+        max_retries = 5  # Increased from 3 to 5
         backoff_factor = 2
         
         for retry in range(max_retries):
             try:
+                # Add a brief initial pause for network stability on retry
+                if retry > 0:
+                    initial_pause = 0.5 * retry
+                    time.sleep(initial_pause)
+                
                 positions = self.client.futures_position_information()
                 for position in positions:
                     if position['symbol'] == symbol:
@@ -224,18 +229,40 @@ class BinanceClient:
                     "Connection aborted",
                     "Connection refused",
                     "code=0",
-                    "<!DOCTYPE html>"
+                    "<!DOCTYPE html>",
+                    "RemoteDisconnected"  # Added specific check for the error we're seeing
                 ]
                 
                 should_retry = any(err in error_str for err in retry_errors)
                 
                 if should_retry and retry < max_retries - 1:
-                    wait_time = backoff_factor * (2 ** retry)
+                    wait_time = backoff_factor * (2 ** retry)  # Exponential backoff
                     logger.warning(f"Retrying get_position_info due to error: {e}")
-                    time.sleep(wait_time)
+                    
+                    # For connection-specific errors, try to reset the client connection
+                    if "Connection aborted" in error_str or "RemoteDisconnected" in error_str:
+                        logger.info("Connection issue detected. Attempting to re-sync time with server...")
+                        try:
+                            # Sync time to fix potential timestamp issues
+                            self._sync_time()
+                            # Add a slightly longer delay for connection issues
+                            time.sleep(wait_time + 1)
+                        except Exception as sync_error:
+                            logger.warning(f"Failed to sync time: {sync_error}")
+                    else:
+                        time.sleep(wait_time)
                 else:
                     if "<!DOCTYPE html>" in error_str:
                         logger.error(f"Binance API returned HTML instead of JSON. Position info unavailable.")
+                        return None
+                    elif "RemoteDisconnected" in error_str or "Connection aborted" in error_str:
+                        logger.error(f"Connection to Binance API was lost. Will try to rebuild connection on next call.")
+                        # Force client re-initialization on next API call
+                        try:
+                            logger.info("Attempting to re-initialize client connection...")
+                            self.client = self._initialize_client()
+                        except Exception as reinit_error:
+                            logger.error(f"Failed to re-initialize client: {reinit_error}")
                         return None
                     else:
                         logger.error(f"Failed to get position info: {e}")

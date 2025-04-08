@@ -199,6 +199,7 @@ def setup():
     websocket_manager.register_callback('book_ticker', on_book_ticker)
     websocket_manager.register_callback('account_update', on_account_update)
     websocket_manager.register_callback('order_update', on_order_update)
+    websocket_manager.register_callback('trade', on_trade)
     
     # Start WebSocket connections
     websocket_manager.start()
@@ -356,12 +357,87 @@ def on_kline_closed(symbol, kline_data):
 
 def on_kline_update(symbol, kline_data):
     """Callback for real-time kline updates (includes unclosed candles)"""
-    pass
+    # Format for easy reading - real-time price updates with colored output
+    price = kline_data['close']
+    formatted_time = datetime.fromtimestamp(kline_data['close_time']/1000).strftime('%H:%M:%S')
+    
+    # Calculate price change percentage from open
+    price_change = ((kline_data['close'] - kline_data['open']) / kline_data['open']) * 100
+    direction = "▲" if price_change >= 0 else "▼"
+    
+    # Log real-time price updates
+    logger.info(f"📊 {symbol} | Price: {price:.2f} | {direction} {abs(price_change):.2f}% | O: {kline_data['open']:.2f} H: {kline_data['high']:.2f} L: {kline_data['low']:.2f} | Vol: {kline_data['volume']:.2f} | {formatted_time}")
+    
+    # Store data for later use
+    global klines_data
+    if symbol in klines_data and klines_data[symbol]:
+        # Update the latest candle with real-time data until it's closed
+        if not kline_data['is_closed'] and len(klines_data[symbol]) > 0:
+            candle = [
+                kline_data['open_time'],
+                str(kline_data['open']),
+                str(kline_data['high']),
+                str(kline_data['low']),
+                str(kline_data['close']),
+                str(kline_data['volume']),
+                kline_data['close_time'],
+                "0",
+                "0",
+                "0",
+                "0",
+                "0"
+            ]
+            klines_data[symbol][-1] = candle
 
 
 def on_book_ticker(symbol, ticker_data):
     """Callback for book ticker updates (best bid/ask)"""
-    pass
+    # Only log significant changes to avoid flooding
+    # Store last values to track changes
+    if not hasattr(on_book_ticker, 'last_values'):
+        on_book_ticker.last_values = {}
+    
+    # Store last values per symbol
+    last = on_book_ticker.last_values.get(symbol, {})
+    bid_price = ticker_data['bid_price']
+    ask_price = ticker_data['ask_price']
+    
+    # Only log if price changed significantly (0.05% or more)
+    significant_change = False
+    if symbol not in on_book_ticker.last_values:
+        significant_change = True
+    else:
+        last_bid = last.get('bid_price', 0)
+        last_ask = last.get('ask_price', 0)
+        
+        if last_bid > 0 and last_ask > 0:
+            bid_change_pct = abs((bid_price - last_bid) / last_bid * 100)
+            ask_change_pct = abs((ask_price - last_ask) / last_ask * 100)
+            if bid_change_pct >= 0.05 or ask_change_pct >= 0.05:
+                significant_change = True
+    
+    # Update last values
+    on_book_ticker.last_values[symbol] = ticker_data
+    
+    if significant_change:
+        spread = ask_price - bid_price
+        spread_pct = (spread / ask_price) * 100
+        
+        logger.info(f"💹 {symbol} | Bid: {bid_price:.2f} ({ticker_data['bid_qty']:.4f}) | Ask: {ask_price:.2f} ({ticker_data['ask_qty']:.4f}) | Spread: {spread:.2f} ({spread_pct:.2f}%)")
+
+
+def on_trade(symbol, trade_data):
+    """Callback for real-time trades"""
+    # Register this callback in main setup function
+    price = trade_data['price']
+    qty = trade_data['quantity']
+    value = price * qty
+    side = "BUY" if trade_data['buyer_maker'] else "SELL"
+    
+    # Only log trades above a certain value to avoid flooding
+    if value > 10000:  # Only log significant trades (>$10,000)
+        trade_time = datetime.fromtimestamp(trade_data['time']/1000).strftime('%H:%M:%S')
+        logger.info(f"💰 Large {side} Trade | {symbol} | Price: {price:.2f} | Qty: {qty:.4f} | Value: ${value:.2f} | {trade_time}")
 
 
 def on_account_update(balance_updates, position_updates):
@@ -400,50 +476,80 @@ def on_order_update(order_data):
         side = order_data['side']
         order_type = order_data['type']
         filled_qty = order_data['filled_quantity']
+        price = order_data['last_filled_price']
         
-        logger.info(f"Order update: {symbol} {side} {order_type} {status} - Filled: {filled_qty}")
-        
-        if status == 'FILLED' and order_type == 'MARKET':
-            stats['total_trades'] += 1
-            stats['last_trade_time'] = datetime.now()
-            
-            realized_profit = order_data['realized_profit']
-            if realized_profit > 0:
-                stats['winning_trades'] += 1
-            elif realized_profit < 0:
-                stats['losing_trades'] += 1
-                
-            save_trade({
-                'symbol': symbol,
-                'side': side,
-                'quantity': filled_qty, 
-                'price': order_data['last_filled_price'],
-                'realized_profit': realized_profit,
-                'commission': order_data['commission'],
-                'commission_asset': order_data['commission_asset'],
-                'timestamp': datetime.now().isoformat(),
-                'balance': stats['current_balance']
-            })
-            
-            notifier = TelegramNotifier()
-            
-            if side == 'BUY':
-                message = f"🟢 *Position Opened*\n"
+        # Create a more visually informative log message
+        if status == 'FILLED':
+            # Highlight completed orders with visual indicators
+            if order_type == 'MARKET':
+                if side == 'BUY':
+                    logger.info(f"🟢🟢🟢 EXECUTED {side} ORDER: {filled_qty} {symbol} @ {price} 🟢🟢🟢")
+                else:
+                    logger.info(f"🔴🔴🔴 EXECUTED {side} ORDER: {filled_qty} {symbol} @ {price} 🔴🔴🔴")
+            elif order_type == 'STOP_MARKET' or order_type == 'TAKE_PROFIT_MARKET':
+                logger.info(f"⚠️⚠️⚠️ EXECUTED {order_type} {side} ORDER: {filled_qty} {symbol} @ {price} ⚠️⚠️⚠️")
             else:
-                message = f"🔴 *Position Closed*\n"
+                logger.info(f"✅✅✅ EXECUTED {order_type} {side} ORDER: {filled_qty} {symbol} @ {price} ✅✅✅")
                 
-            message += f"Symbol: {symbol}\n" \
-                      f"Side: {side}\n" \
-                      f"Quantity: {filled_qty}\n" \
-                      f"Price: {order_data['last_filled_price']}\n"
-                      
-            if realized_profit != 0:
-                message += f"Realized P/L: {realized_profit:.2f} USDT\n"
+            # For filled orders, update trade statistics
+            if order_type == 'MARKET':
+                stats['total_trades'] += 1
+                stats['last_trade_time'] = datetime.now()
                 
-            notifier.send_message(message)
+                realized_profit = order_data['realized_profit']
+                if realized_profit > 0:
+                    stats['winning_trades'] += 1
+                    logger.info(f"💲💲💲 PROFIT: +{realized_profit:.2f} USDT 💲💲💲")
+                elif realized_profit < 0:
+                    stats['losing_trades'] += 1
+                    logger.info(f"💸💸💸 LOSS: {realized_profit:.2f} USDT 💸💸💸")
+                    
+                trade_data = {
+                    'symbol': symbol,
+                    'side': side,
+                    'quantity': filled_qty, 
+                    'price': price,
+                    'realized_profit': realized_profit,
+                    'commission': order_data['commission'],
+                    'commission_asset': order_data['commission_asset'],
+                    'timestamp': datetime.now().isoformat(),
+                    'balance': stats['current_balance']
+                }
+                
+                save_trade(trade_data)
+                
+                # Show current account balance after trade
+                try:
+                    current_balance = binance_client.get_account_balance()
+                    logger.info(f"💰 ACCOUNT BALANCE: {current_balance:.2f} USDT 💰")
+                except:
+                    pass
+                
+                # Send notification
+                notifier = TelegramNotifier()
+                
+                if side == 'BUY':
+                    message = f"🟢 *Position Opened*\n"
+                else:
+                    message = f"🔴 *Position Closed*\n"
+                    
+                message += f"Symbol: {symbol}\n" \
+                          f"Side: {side}\n" \
+                          f"Quantity: {filled_qty}\n" \
+                          f"Price: {price}\n"
+                          
+                if realized_profit != 0:
+                    message += f"Realized P/L: {realized_profit:.2f} USDT\n"
+                    
+                notifier.send_message(message)
+        else:
+            # For other order statuses, just log basic info
+            logger.info(f"Order Update: {symbol} {side} {order_type} {status} - Qty: {filled_qty}, Price: {price}")
                 
     except Exception as e:
         logger.error(f"Error processing order update: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
 
 
 def check_for_signals(symbol=None):
