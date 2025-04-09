@@ -32,7 +32,8 @@ if ! command -v pip3 &>/dev/null && ! command -v pip &>/dev/null; then
     apt-get update -y && apt-get install -y python3-pip
 fi
 
-# Determine pip command to use
+# Determine pip command to use same problem
+
 if command -v pip3 &>/dev/null; then
     PIP_CMD="pip3"
 elif command -v pip &>/dev/null; then
