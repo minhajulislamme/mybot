@@ -17,19 +17,20 @@ fi
 # Define variables - using /root/mybot as this is where your bot seems to be located on the VPS
 BOT_DIR="/root/mybot"
 SERVICE_NAME="binancebot"
+LOG_DIR="$BOT_DIR/logs"
 
 echo "Setting up Binance trading bot"
 echo "Bot directory: $BOT_DIR"
 
 # Create bot directory if it doesn't exist
 mkdir -p "$BOT_DIR"
-mkdir -p "$BOT_DIR/logs"
+mkdir -p "$LOG_DIR"
 
 # Update package list
 apt-get update
 
 # Install system dependencies
-apt-get install -y python3 python3-pip python3-venv git supervisor
+apt-get install -y python3 python3-pip python3-venv python3-dev git supervisor
 
 # Check if Python 3 is installed
 if ! command -v python3 &>/dev/null; then
@@ -54,8 +55,24 @@ fi
 # Activate virtual environment and install requirements
 echo "Installing Python dependencies..."
 source "$BOT_DIR/venv/bin/activate"
-pip install --upgrade pip
+
+# Upgrade pip
+python -m pip install --upgrade pip
+
+# Install wheel package to avoid build errors
+pip install wheel
+
+# Install all required packages
 pip install -r "$BOT_DIR/requirements.txt"
+
+# List all installed packages for verification
+echo "Installed packages:"
+pip list
+
+# Test import of key packages
+echo "Testing key package imports..."
+python -c "import schedule; import python_binance; import numpy; import pandas; import websocket; print('All key packages imported successfully!')" || echo "Warning: Not all packages imported successfully. Check logs for details."
+
 deactivate
 
 # Create the systemd service file
@@ -79,8 +96,8 @@ Environment=PYTHONUNBUFFERED=1
 WantedBy=multi-user.target
 EOF
 
-# Make script executable
-chmod +x "$BOT_DIR/main.py"
+# Make scripts executable
+chmod +x "$BOT_DIR/main.py" 2>/dev/null || echo "Warning: main.py not executable, may not be needed"
 chmod +x "$BOT_DIR/debug.sh"
 
 # Set permissions
@@ -99,6 +116,7 @@ cat > "$BOT_DIR/check_service.sh" << 'EOF'
 
 SERVICE_NAME="binancebot"
 LOG_FILE="/root/mybot/logs/service_checker.log"
+mkdir -p "$(dirname "$LOG_FILE")"
 
 echo "$(date): Checking service status" >> "$LOG_FILE"
 
@@ -125,22 +143,20 @@ chmod +x "$BOT_DIR/check_service.sh"
 # Add to crontab to run every 5 minutes
 (crontab -l 2>/dev/null; echo "*/5 * * * * /root/mybot/check_service.sh") | crontab -
 
-echo "Running debug script to test the bot..."
-cd "$BOT_DIR"
-./debug.sh || true
+# Add a daily restart to prevent memory leaks (4 AM)
+(crontab -l 2>/dev/null; echo "0 4 * * * systemctl restart binancebot") | crontab -
 
 echo "======================================"
 echo "Setup completed!"
-echo "Debug log has been created to help diagnose any issues."
-echo "Please check the logs at $BOT_DIR/logs/debug_run.log"
 echo ""
 echo "Starting the service now..."
 systemctl start "$SERVICE_NAME"
+systemctl status "$SERVICE_NAME"
 echo ""
 echo "Useful commands:"
 echo "- Check bot status: systemctl status $SERVICE_NAME"
 echo "- View logs: journalctl -u $SERVICE_NAME -f"
-echo "- View debug logs: cat $BOT_DIR/logs/debug_run.log"
+echo "- View debug logs: cat $BOT_DIR/logs/bot_service.log"
 echo "- Run in debug mode: cd $BOT_DIR && ./debug.sh"
 echo "- Restart bot: systemctl restart $SERVICE_NAME"
 echo "======================================"
