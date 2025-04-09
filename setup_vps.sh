@@ -14,19 +14,28 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-# Define variables
-USERNAME=$(logname)
-BOT_DIR="$(pwd)"
+# Define variables - using /root/mybot as this is where your bot seems to be located on the VPS
+BOT_DIR="/root/mybot"
 SERVICE_NAME="binancebot"
 
-echo "Setting up Binance trading bot for user: $USERNAME"
+echo "Setting up Binance trading bot"
 echo "Bot directory: $BOT_DIR"
+
+# Create bot directory if it doesn't exist
+mkdir -p "$BOT_DIR"
+mkdir -p "$BOT_DIR/logs"
 
 # Update package list
 apt-get update
 
 # Install system dependencies
 apt-get install -y python3 python3-pip python3-venv git supervisor
+
+# Copy all files from current directory to BOT_DIR if running from a different location
+if [ "$(pwd)" != "$BOT_DIR" ]; then
+    echo "Copying files to $BOT_DIR"
+    cp -r . "$BOT_DIR"
+fi
 
 # Create python virtual environment
 echo "Creating Python virtual environment..."
@@ -41,9 +50,6 @@ pip install --upgrade pip
 pip install -r "$BOT_DIR/requirements.txt"
 deactivate
 
-# Create log directory if it doesn't exist
-mkdir -p "$BOT_DIR/logs"
-
 # Create the systemd service file
 echo "Creating systemd service file..."
 cat > /etc/systemd/system/${SERVICE_NAME}.service << EOF
@@ -52,11 +58,11 @@ Description=Binance Trading Bot
 After=network.target
 
 [Service]
-User=$USERNAME
+User=root
 WorkingDirectory=$BOT_DIR
 ExecStart=$BOT_DIR/venv/bin/python $BOT_DIR/main.py --small-account
-Restart=always
-RestartSec=10
+Restart=on-failure
+RestartSec=30
 StandardOutput=append:$BOT_DIR/logs/bot_service.log
 StandardError=append:$BOT_DIR/logs/bot_service_error.log
 Environment=PYTHONUNBUFFERED=1
@@ -67,27 +73,66 @@ EOF
 
 # Make script executable
 chmod +x "$BOT_DIR/main.py"
+chmod +x "$BOT_DIR/debug.sh"
 
 # Set permissions
-chown -R "$USERNAME:$USERNAME" "$BOT_DIR"
+chown -R root:root "$BOT_DIR"
 
 # Reload systemd configuration
 systemctl daemon-reload
 
-# Enable and start the service
+# Enable the service
 systemctl enable "$SERVICE_NAME"
-systemctl start "$SERVICE_NAME"
 
-echo "Checking service status..."
-systemctl status "$SERVICE_NAME"
+# Create a service checker script
+cat > "$BOT_DIR/check_service.sh" << 'EOF'
+#!/bin/bash
+# Script to check and restart the bot service if it's down
+
+SERVICE_NAME="binancebot"
+LOG_FILE="/root/mybot/logs/service_checker.log"
+
+echo "$(date): Checking service status" >> "$LOG_FILE"
+
+# Check if service is running
+if ! systemctl is-active --quiet "$SERVICE_NAME"; then
+    echo "$(date): Service is down, attempting to restart" >> "$LOG_FILE"
+    systemctl restart "$SERVICE_NAME"
+    sleep 10
+    
+    if systemctl is-active --quiet "$SERVICE_NAME"; then
+        echo "$(date): Service successfully restarted" >> "$LOG_FILE"
+    else
+        echo "$(date): Failed to restart service" >> "$LOG_FILE"
+        # Get last 20 lines of journal for the service
+        journalctl -u "$SERVICE_NAME" -n 20 >> "$LOG_FILE"
+    fi
+else
+    echo "$(date): Service is running correctly" >> "$LOG_FILE"
+fi
+EOF
+
+chmod +x "$BOT_DIR/check_service.sh"
+
+# Add to crontab to run every 5 minutes
+(crontab -l 2>/dev/null; echo "*/5 * * * * /root/mybot/check_service.sh") | crontab -
+
+echo "Running debug script to test the bot..."
+cd "$BOT_DIR"
+./debug.sh || true
 
 echo "======================================"
 echo "Setup completed!"
-echo "The bot is now running as a system service."
+echo "Debug log has been created to help diagnose any issues."
+echo "Please check the logs at $BOT_DIR/logs/debug_run.log"
+echo ""
+echo "Starting the service now..."
+systemctl start "$SERVICE_NAME"
 echo ""
 echo "Useful commands:"
 echo "- Check bot status: systemctl status $SERVICE_NAME"
 echo "- View logs: journalctl -u $SERVICE_NAME -f"
+echo "- View debug logs: cat $BOT_DIR/logs/debug_run.log"
+echo "- Run in debug mode: cd $BOT_DIR && ./debug.sh"
 echo "- Restart bot: systemctl restart $SERVICE_NAME"
-echo "- Stop bot: systemctl stop $SERVICE_NAME"
 echo "======================================"
