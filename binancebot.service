@@ -5,7 +5,7 @@ After=network.target
 [Service]
 User=root
 WorkingDirectory=/root/mybot
-ExecStart=/root/mybot/venv/bin/python /root/mybot/main.py --small-account
+ExecStart=/root/mybot/venv/bin/python3 /root/mybot/main.py --small-account
 Restart=on-failure
 RestartSec=30
 StandardOutput=append:/root/mybot/logs/bot_service.log

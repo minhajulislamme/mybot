@@ -31,6 +31,14 @@ apt-get update
 # Install system dependencies
 apt-get install -y python3 python3-pip python3-venv git supervisor
 
+# Check if Python 3 is installed
+if ! command -v python3 &>/dev/null; then
+    echo "ERROR: Python 3 not found even after installation attempt!"
+    exit 1
+else
+    echo "Python 3 installed: $(python3 -V)"
+fi
+
 # Copy all files from current directory to BOT_DIR if running from a different location
 if [ "$(pwd)" != "$BOT_DIR" ]; then
     echo "Copying files to $BOT_DIR"
@@ -60,7 +68,7 @@ After=network.target
 [Service]
 User=root
 WorkingDirectory=$BOT_DIR
-ExecStart=$BOT_DIR/venv/bin/python $BOT_DIR/main.py --small-account
+ExecStart=$BOT_DIR/venv/bin/python3 $BOT_DIR/main.py --small-account
 Restart=on-failure
 RestartSec=30
 StandardOutput=append:$BOT_DIR/logs/bot_service.log
